@@ -1,0 +1,325 @@
+// TeamX Prisma Database Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum UserRole {
+  MAKER
+  OWNER
+  MANAGER
+  LEAD
+  WORKER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  APPROVED
+  ARCHIVED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum AttachmentType {
+  IMAGE
+  PDF
+  XLSX
+  DOCX
+  OTHER
+}
+
+enum ReportCategory {
+  SHIFT
+  DELIVERY
+  INSPECTION
+  MAINTENANCE
+  OTHER
+}
+
+enum ChatType {
+  DM
+  GROUP
+  TASK
+  ANNOUNCEMENT
+}
+
+enum NotificationType {
+  TASK_ASSIGNED
+  TASK_COMPLETED
+  TASK_APPROVED
+  MESSAGE_RECEIVED
+  REPORT_SUBMITTED
+  DEADLINE_APPROACHING
+}
+
+// Ana Tablolar
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  domain      String?
+  settings    Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // İlişkiler
+  users         User[]
+  tasks         Task[]
+  reports       Report[]
+  chats         Chat[]
+  auditLogs     AuditLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id          String     @id @default(cuid())
+  tenantId    String
+  email       String
+  password    String
+  name        String
+  role        UserRole
+  status      UserStatus @default(ACTIVE)
+  avatarUrl   String?
+  phone       String?
+  department  String?
+  position    String?
+  lastSeenAt  DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  // İlişkiler
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedTasks     Task[]         @relation("TaskAssignee")
+  createdTasks      Task[]         @relation("TaskCreator")
+  approvedTasks     Task[]         @relation("TaskApprover")
+  taskComments      TaskComment[]
+  reports           Report[]
+  sentMessages      Message[]
+  chatMembers       ChatMember[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, role])
+  @@index([tenantId, status])
+  @@map("users")
+}
+
+model Task {
+  id            String      @id @default(cuid())
+  tenantId      String
+  title         String
+  description   String?     @db.Text
+  priority      TaskPriority @default(MEDIUM)
+  status        TaskStatus   @default(OPEN)
+  dueAt         DateTime?
+  estimatedHours Int?
+  assignedById  String
+  assignedToId  String
+  approvedAt    DateTime?
+  approvedById  String?
+  tags          String[]     @default([])
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // İlişkiler
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedBy    User             @relation("TaskCreator", fields: [assignedById], references: [id])
+  assignedTo    User             @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  approvedBy    User?            @relation("TaskApprover", fields: [approvedById], references: [id])
+  attachments   TaskAttachment[]
+  comments      TaskComment[]
+  chat          Chat?
+
+  @@index([tenantId, status])
+  @@index([tenantId, assignedToId])
+  @@index([tenantId, dueAt])
+  @@map("tasks")
+}
+
+model TaskAttachment {
+  id        String         @id @default(cuid())
+  taskId    String
+  type      AttachmentType
+  filename  String
+  url       String
+  size      Int
+  mimeType  String
+  metadata  Json?
+  createdAt DateTime       @default(now())
+
+  task      Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("task_attachments")
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  authorId  String
+  body      String   @db.Text
+  mentions  String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id])
+
+  @@index([taskId, createdAt])
+  @@map("task_comments")
+}
+
+model Report {
+  id          String          @id @default(cuid())
+  tenantId    String
+  title       String
+  body        String          @db.Text
+  category    ReportCategory  @default(OTHER)
+  createdById String
+  archivedAt  DateTime?
+  tags        String[]        @default([])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy   User               @relation(fields: [createdById], references: [id])
+  attachments ReportAttachment[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, category])
+  @@map("reports")
+}
+
+model ReportAttachment {
+  id        String         @id @default(cuid())
+  reportId  String
+  type      AttachmentType
+  filename  String
+  url       String
+  size      Int
+  mimeType  String
+  metadata  Json?
+  createdAt DateTime       @default(now())
+
+  report    Report         @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@map("report_attachments")
+}
+
+model Chat {
+  id          String    @id @default(cuid())
+  tenantId    String
+  type        ChatType
+  name        String?
+  description String?
+  taskId      String?   @unique
+  createdById String
+  settings    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  task        Task?        @relation(fields: [taskId], references: [id])
+  members     ChatMember[]
+  messages    Message[]
+
+  @@index([tenantId, type])
+  @@map("chats")
+}
+
+model ChatMember {
+  chatId        String
+  userId        String
+  canMessage    Boolean        @default(true)
+  mutedUntil    DateTime?
+  joinedAt      DateTime       @default(now())
+  lastReadAt    DateTime?
+
+  chat          Chat           @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([chatId, userId])
+  @@map("chat_members")
+}
+
+model Message {
+  id            String    @id @default(cuid())
+  chatId        String
+  senderId      String
+  body          String    @db.Text
+  attachments   Json?
+  replyToId     String?
+  mentions      String[]  @default([])
+  reactions     Json?
+  editedAt      DateTime?
+  deletedAt     DateTime?
+  readReceipts  Json?
+  createdAt     DateTime  @default(now())
+
+  chat          Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender        User      @relation(fields: [senderId], references: [id])
+  replyTo       Message?  @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies       Message[] @relation("MessageReplies")
+
+  @@index([chatId, createdAt])
+  @@map("messages")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  payload   Json?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}
